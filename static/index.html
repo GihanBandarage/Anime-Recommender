@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Anime Recommender</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: url('https://wallpapercave.com/wp/wp8226640.jpg') no-repeat center center fixed;
+      background-size: cover;
+      display: flex; justify-content: center; align-items: center;
+      height: 100vh; backdrop-filter: blur(4px);
+    }
+    .glass-card {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 1rem; padding: 2.5rem;
+      box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      text-align: center; width: 90%; max-width: 400px;
+    }
+    .glass-card h1 {
+      font-size: 1.8rem; margin-bottom: 1.5rem; color: #f472b6; font-weight: 600;
+      text-shadow: 0 0 8px rgba(255, 255, 255, 0.2);
+    }
+    input[type="text"] {
+      width: 100%; padding: 0.8rem 1rem; border-radius: 0.5rem;
+      border: 2px solid rgba(244, 114, 182, 0.6);
+      background: rgba(255, 255, 255, 0.9);
+      font-size: 1rem; margin-bottom: 1.2rem; color: #333;
+    }
+    input[type="text"]::placeholder { color: #f472b6; text-align: center; }
+    input[type="text"]:focus { outline: none; border: 2px solid #8b5cf6; box-shadow: 0 0 8px #8b5cf6; }
+    button {
+      background: linear-gradient(135deg, #f472b6, #8b5cf6); color: white;
+      padding: 0.8rem 2rem; font-size: 1rem; font-weight: 600;
+      border: none; border-radius: 0.5rem; cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    button:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(245, 158, 181, 0.5); }
+    pre { text-align: left; white-space: pre-wrap; margin-top: 1rem; color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="glass-card">
+    <h1>Anime Recommendations</h1>
+    <form id="form" action = "">
+      <input id="username" type="text" name="username" placeholder="Enter MAL username" required />
+      <button type="submit">Get Recommendations</button>
+    </form>
+    <pre id="result"></pre>
+  </div>
+
+  <script>
+    const form = document.getElementById("form");
+    const usernameEl = document.getElementById("username");
+    const resultEl = document.getElementById("result");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const username = usernameEl.value.trim();
+      if (!username) return;
+        window.location.href = `results.html?username=${encodeURIComponent(username)}`;
+
+
+      resultEl.textContent = "Fetching…";
+
+      try {
+        const res = await fetch(`/api/animelist?username=${encodeURIComponent(username)}`);
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+          resultEl.textContent = `Error: ${data.message || "Failed to fetch list"}`;
+          return;
+        }
+
+        const top = data.list.slice(0, 10)
+          .map(x => `${x.title} — score: ${x.score || 0}`)
+          .join("\n");
+
+        resultEl.textContent = top || "No entries found for that user.";
+      } catch (err) {
+        resultEl.textContent = "Network error.";
+        console.error(err);
+      }
+    });
+  </script>
+</body>
+</html>

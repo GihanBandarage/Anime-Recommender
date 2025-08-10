@@ -1,0 +1,20 @@
+# ignore large data files
+*.csv
+*.json
+*.xlsx
+
+# optional: only ignore the big ones, not small test CSVs
+animelists_cleaned.csv
+anime_cleaned.csv
+anime_cleaned.csv
+anime_recommender_app.py
+animelists_cleaned.csv
+app.py
+current_user.txt
+get_anime_list.py
+my_anime_list.json
+token.json
+csv/
+cleanev/
+.venv/
+older shit/
