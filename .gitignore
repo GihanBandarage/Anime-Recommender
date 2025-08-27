@@ -18,3 +18,5 @@ csv/
 cleanev/
 .venv/
 older shit/
+updatedflask.py
+updatedflask_copy.py

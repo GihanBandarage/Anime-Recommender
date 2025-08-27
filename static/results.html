@@ -1,58 +1,212 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Anime Recommendations - Results</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-  <style>
-    body {
-      font-family: 'Inter', sans-serif;
-      background: url('https://wallpapercave.com/wp/wp8226640.jpg') no-repeat center center fixed;
-      background-size: cover;
-      padding: 2rem;
-      color: black;
-    }
-    h1 { color: #f472b6; text-align: center; }
-    ul {
-      background: rgba(255,255,255,0.1);
-      border-radius: 1rem;
-      padding: 1rem;
-      max-width: 500px;
-      margin: 1rem auto;
-      list-style: none;
-    }
-    li { padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
-    li:last-child { border-bottom: none; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anime Recommendations</title>
+    <style>
+        /* --- Base Styling --- */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #0d0d0d;
+            color: #fff;
+            font-family: "Inter", "Segoe UI", sans-serif;
+            padding: 30px;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 2.2rem;
+            margin-bottom: 25px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        /* --- Recommendations Grid --- */
+        #recommendations {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 25px;
+            list-style: none;
+            padding: 0;
+            margin-top: 20px;
+        }
+
+        /* --- Anime Card --- */
+        .anime-card {
+            background-color: #111;
+            border: 1px solid #222;
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.4);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .anime-card:hover {
+            transform: scale(1.03);
+            box-shadow: 0px 8px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        /* --- Anime Poster --- */
+        .anime-poster {
+            width: 100%;
+            height: 400px;
+            object-fit: cover;
+            background-color: #222;
+        }
+
+        /* --- Anime Info Section --- */
+        .anime-info {
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .anime-title {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 5px;
+        }
+
+        /* --- Scores & Labels --- */
+        .anime-meta {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 5px;
+        }
+
+        .tag {
+            padding: 3px 8px;
+            font-size: 0.8rem;
+            font-weight: bold;
+            border-radius: 6px;
+            background-color: #333;
+            color: #fff;
+        }
+
+        .score {
+            background-color: #22c55e; /* green */
+        }
+
+        .rating {
+            background-color: #3b82f6; /* blue */
+        }
+
+        .users {
+            background-color: #9333ea; /* purple */
+        }
+
+        /* --- Synopsis --- */
+        .anime-synopsis {
+            font-size: 0.9rem;
+            color: #ccc;
+            line-height: 1.4;
+            margin-top: 8px;
+            display: -webkit-box;
+            -webkit-line-clamp: 4;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        /* --- Link Button --- */
+        .mal-link {
+            margin-top: 10px;
+            text-align: right;
+        }
+
+        .mal-link a {
+            background-color: #2563eb;
+            padding: 6px 12px;
+            font-size: 0.85rem;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 6px;
+            transition: background-color 0.2s ease;
+        }
+
+        .mal-link a:hover {
+            background-color: #1d4ed8;
+        }
+
+        /* --- Loading --- */
+        .loading {
+            text-align: center;
+            font-size: 1.2rem;
+            margin-top: 40px;
+            color: #aaa;
+        }
+    </style>
 </head>
 <body>
-  <h1>Your Recommendations</h1>
-  <ul id="list"><li>Loading...</li></ul>
-<script>
-  const params = new URLSearchParams(window.location.search);
-  const username = params.get("username");
-  const listEl = document.getElementById("list");
+    <h1>Recommendations for <span id="username-display"></span></h1>
+    <p class="loading">Loading recommendations...</p>
+    <ul id="recommendations"></ul>
 
-  if (!username) {
-    listEl.innerHTML = "<li>No username provided.</li>";
-  } else {
-    fetch(`/api/recommendations?username=${encodeURIComponent(username)}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.error || !data.recommendations?.length) {
-          listEl.innerHTML = `<li>Error: ${data.message || "No recommendations found"}</li>`;
-          return;
-        }
-        listEl.innerHTML = data.recommendations
-          .map(x => `<li>${x.title} — predicted score: ${x.score.toFixed(2)}</li>`)
-          .join("");
-      })
-      .catch(() => {
-        listEl.innerHTML = "<li>Network error.</li>";
-      });
-  }
-</script>
+    <script>
+        document.addEventListener("DOMContentLoaded", async function() {
+            const params = new URLSearchParams(window.location.search);
+            const username = params.get('username');
+            const usernameDisplay = document.getElementById('username-display');
+            const recommendationsList = document.getElementById('recommendations');
+            const loadingMessage = document.querySelector('.loading');
 
+            if (username) {
+                usernameDisplay.textContent = username;
+
+                try {
+                    const response = await fetch(`/api/recommendations?username=${username}`);
+                    const data = await response.json();
+
+                    loadingMessage.style.display = 'none';
+
+                    if (data.error) {
+                        recommendationsList.innerHTML = `<p style="color:red;">Error: ${data.message}</p>`;
+                    } else if (data.recommendations && data.recommendations.length > 0) {
+                        data.recommendations.forEach(anime => {
+                            const poster = anime.main_picture?.large || anime.main_picture?.medium || 'https://via.placeholder.com/300x400?text=No+Image';
+                            const li = document.createElement('li');
+                            li.className = 'anime-card';
+                            li.innerHTML = `
+                                <img class="anime-poster" src="${poster}" alt="${anime.title}" onerror="this.src='https://via.placeholder.com/300x400?text=No+Image'">
+                                <div class="anime-info">
+                                    <div class="anime-title">${anime.title}</div>
+                                    <div class="anime-meta">
+                                        <span class="tag score">Score: ${anime.mean ?? 'N/A'}</span>
+                                        <span class="tag rating">Rating: ${anime.rating || 'N/A'}</span>
+                                        <span class="tag users">${anime.num_list_users || 0} Users</span>
+                                    </div>
+                                    <div class="anime-synopsis">${anime.synopsis || 'No synopsis available.'}</div>
+                                    <div class="mal-link">
+                                        <a href="https://myanimelist.net/anime/${anime.id}" target="_blank">View on MAL</a>
+                                    </div>
+                                </div>
+                            `;
+                            recommendationsList.appendChild(li);
+                        });
+                    } else {
+                        recommendationsList.innerHTML = `<p>No recommendations found.</p>`;
+                    }
+                } catch (error) {
+                    loadingMessage.style.display = 'none';
+                    recommendationsList.innerHTML = `<p style="color:red;">Failed to fetch recommendations.p>`;
+                    console.error('Error fetching recommendations:', error);
+                }
+
+            } else {
+                loadingMessage.style.display = 'none';
+                recommendationsList.innerHTML = `<p>No username provided. Please go back to the <a href="/">homepage</a>.</p>`;
+            }
+        });
+    </script>
 </body>
 </html>
