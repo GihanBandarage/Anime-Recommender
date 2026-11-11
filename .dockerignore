@@ -1,0 +1,10 @@
+.git
+.venv
+.env*
+token.json
+*.db
+*.db-*
+*.csv
+__pycache__
+artifacts
+tests
