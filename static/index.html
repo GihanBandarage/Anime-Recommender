@@ -1,134 +1,125 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anime Recommendations</title>
-    <style>
-        body {
-            background-color: #000000;
-            color: #ffffff;
-            font-family: sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            text-align: center;
-        }
-
-        .container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 25px;
-            padding-bottom: 100px;
-        }
-
-        .main-title {
-            font-size: 3em;
-            font-weight: bold;
-            margin-bottom: -15px;
-        }
-
-        .subtitle {
-            font-size: 1.2em;
-            color: #aaaaaa;
-        }
-
-        .input-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-top: 15px;
-        }
-
-        .username-input {
-            padding: 12px;
-            font-size: 1em;
-            border: 1px solid #444;
-            background-color: #1a1a1a;
-            color: #ffffff;
-            border-radius: 5px;
-            width: 300px;
-        }
-        
-        .username-input::placeholder {
-            color: #777777;
-        }
-
-        .go-button {
-            padding: 12px 25px;
-            font-size: 1em;
-            font-weight: bold;
-            border: 1px solid #444;
-            background-color: #333333;
-            color: #ffffff;
-            cursor: pointer;
-            border-radius: 5px;
-            transition: background-color 0.3s;
-        }
-
-        .go-button:hover {
-            background-color: #444444;
-        }
-
-        .info-text {
-            font-size: 0.8em;
-            color: #777777;
-            margin-top: 5px;
-        }
-        
-        .footer-text {
-            font-size: 0.7em;
-            color: #555555;
-            position: absolute;
-            bottom: 20px;
-            width: 80%;
-            line-height: 1.5;
-        }
-    </style>
-</head>
-<body>
-
-    <div class="container">
-        <h1 class="main-title">Anime Recommendations</h1>
-        <p class="subtitle">Get personalized anime recommendations powered by Machine Learning.</p>
-        
-        <div class="input-group">
-            <input type="text" class="username-input" id="username-input" placeholder="Enter your MyAnimeList username..">
-            <button class="go-button" id="go-button">Go</button>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#121312" />
+    <meta
+      name="description"
+      content="Find your next anime from the shows you actually love. Personalized recommendations from your public MyAnimeList profile."
+    />
+    <title>Next Arc — Find your next anime</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header wrap">
+      <a class="brand" href="/" aria-label="Next Arc home"
+        ><span class="brand-mark" aria-hidden="true">↗</span> NEXT ARC<span
+          class="brand-dot"
+          >.</span
+        ></a
+      >
+      <a
+        class="header-link"
+        href="https://myanimelist.net/"
+        target="_blank"
+        rel="noopener noreferrer"
+        >Made for MyAnimeList <span aria-hidden="true">↗</span></a
+      >
+    </header>
+    <main class="wrap landing">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span class="live-dot"></span> LESS SCROLLING. MORE WATCHING.
+          </p>
+          <h1>Your next<br />anime <span class="serif">obsession.</span></h1>
+          <p class="intro">
+            You have a type. Let’s find it.<br />Turn the shows you love into
+            your next great watch.
+          </p>
+          <form
+            id="search-form"
+            class="search-form"
+            action="/results.html"
+            method="get"
+          >
+            <label for="username">YOUR MYANIMELIST USERNAME</label>
+            <div class="input-row">
+              <span class="input-prefix" aria-hidden="true">@</span>
+              <input
+                id="username"
+                name="username"
+                type="text"
+                placeholder="Your MAL username"
+                required
+                minlength="2"
+                maxlength="16"
+                pattern="[A-Za-z0-9_-]{2,16}"
+                title="2–16 letters, numbers, underscores or hyphens"
+                autocomplete="username"
+                autocapitalize="none"
+                spellcheck="false"
+                aria-describedby="form-hint"
+              />
+              <button class="primary-button" type="submit">
+                Find my next watch <span aria-hidden="true">↗</span>
+              </button>
+            </div>
+            <p class="form-hint" id="form-hint">
+              Public profile. No login needed. Your ratings do the talking.
+            </p>
+          </form>
         </div>
-        
-        <p class="info-text">Press Enter or click Go</p>
-    </div>
-
-    <p class="footer-text">
-        Anime Recommendations uses your MyAnimeList.net profile and a trained machine learning model to generate personalized anime recommendations.<br>
-        Anime information is as of June 2025.
-    </p>
-
-    <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            const goButton = document.getElementById("go-button");
-            const usernameInput = document.getElementById("username-input");
-
-            goButton.addEventListener("click", function() {
-                const username = usernameInput.value.trim();
-                if (username) {
-                    window.location.href = `results.html?username=${username}`;
-                } else {
-                    alert("Please enter a username.");
-                }
-            });
-
-            usernameInput.addEventListener("keypress", function(event) {
-                if (event.key === "Enter") {
-                    goButton.click();
-                }
-            });
-        });
-    </script>
-
-</body>
+        <div class="hero-art" aria-hidden="true">
+          <div class="orbit orbit-one"></div>
+          <div class="orbit orbit-two"></div>
+          <div class="art-caption">A NEW STORY IS WAITING</div>
+          <div class="ticket ticket-back">
+            <span>THE NEXT CHAPTER</span>
+            <div class="ticket-glyph">次</div>
+            <span>JUST ONE MORE EPISODE.</span>
+          </div>
+          <div class="ticket ticket-front">
+            <div class="ticket-top">CURATED FOR YOU <span>✦</span></div>
+            <div class="ticket-lines"></div>
+            <div class="ticket-title">Good taste.<br />Great anime.</div>
+            <div class="ticket-bottom">
+              <span>YOUR NEXT ARC</span><span>↗</span>
+            </div>
+          </div>
+          <span class="art-spark">✳</span
+          ><span class="art-index">DISCOVER / 01</span>
+        </div>
+      </section>
+      <section class="how-it-works" aria-label="How it works">
+        <div>
+          <span class="step-number">01</span>
+          <h2>Bring your taste</h2>
+          <p>We read your public MAL list and the scores you actually gave.</p>
+        </div>
+        <div>
+          <span class="step-number">02</span>
+          <h2>Find your people</h2>
+          <p>
+            Match with similar viewers, or explore community picks for your
+            favorites.
+          </p>
+        </div>
+        <div>
+          <span class="step-number">03</span>
+          <h2>Start a new arc</h2>
+          <p>
+            Discover something outside your list, with a reason behind every
+            pick.
+          </p>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer wrap">
+      <span>A little less searching. A little more anime.</span
+      ><span>Independent project · Data from MyAnimeList</span>
+    </footer>
+  </body>
 </html>

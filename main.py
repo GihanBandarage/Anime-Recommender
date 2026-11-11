@@ -1,218 +1,222 @@
-import os, sys, json, time, sqlite3
+import json
+import logging
+import os
 from pathlib import Path
-from flask import Flask, request, send_from_directory, make_response
+import re
+import sqlite3
+import threading
+import time
+from urllib.parse import quote
+
+from cachetools import TTLCache
+from flask import Flask, g, has_request_context, jsonify, request
 import requests
 
-print("boot ✅")
+from recommender import collaborative, community_candidates, rated_entries, seeds
 
-# --- config (keep it simple) ---
-DB_PATH = "anime.db"
-TOKEN_FILE = "token.json"
-LIMIT = 100
-PAUSE = 0.25     # chill a bit for MAL
+BASE = Path(__file__).resolve().parent
+DB_PATH = os.environ.get('DB_PATH', str(BASE / 'anime.db'))
+TOKEN_FILE = os.environ.get('TOKEN_FILE', str(BASE / 'token.json'))
+app = Flask(__name__, static_folder='static', static_url_path='/')
+log = logging.getLogger(__name__)
+_cache = TTLCache(maxsize=1024, ttl=3600)
+_cache_lock = threading.Lock()
+_rate_lock = threading.Lock()
+_next_request = 0.0
+DETAIL_FIELDS = ('id,title,main_picture,synopsis,mean,rating,num_list_users,media_type,'
+                 'genres,start_date,num_episodes,related_anime,recommendations')
 
-app = Flask(__name__, static_folder="static", static_url_path="/")
-print("this is just normal update")
-def _nocache(resp):
-    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["Expires"] = "0"
-    return resp
 
-def j(x, code=200):
-    r = make_response(json.dumps(x, ensure_ascii=False), code)
-    r.mimetype = "application/json"
-    return _nocache(r)
+class APIError(Exception):
+    def __init__(self, message, status=502):
+        self.message, self.status = message, status
+        super().__init__(message)
 
-def tok():
+
+@app.errorhandler(APIError)
+def api_error(error):
+    return jsonify(error=True, message=error.message), error.status
+
+
+@app.before_request
+def request_deadline():
+    g.deadline = time.monotonic() + 85
+
+
+@app.after_request
+def response_headers(response):
+    if request.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
+
+
+def mal_headers():
+    if client_id := os.environ.get('MAL_CLIENT_ID', '').strip():
+        return {'X-MAL-CLIENT-ID': client_id}
+    token = os.environ.get('MAL_TOKEN', '').strip()
+    if not token:
+        try:
+            token = json.loads(Path(TOKEN_FILE).read_text()).get('access_token', '')
+        except (OSError, ValueError, AttributeError):
+            pass
+    if not token:
+        raise APIError('MyAnimeList is not configured. The server owner needs to set '
+                       'MAL_CLIENT_ID or MAL_TOKEN. See the setup guide.', 503)
+    return {'Authorization': f'Bearer {token}'}
+
+
+def mal_get(path, params=None):
+    global _next_request
+    headers = mal_headers()
+    # At most three outbound requests per second in each worker.
+    with _rate_lock:
+        time.sleep(max(0, _next_request - time.monotonic()))
+        _next_request = time.monotonic() + 0.34
+    remaining = g.deadline - time.monotonic() if has_request_context() else 85
+    if remaining <= 0:
+        raise APIError('MyAnimeList took too long to respond. Please try again shortly.', 504)
     try:
-        with open(TOKEN_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)["access_token"]
-    except Exception as e:
-        print("no token:", e)
-        sys.exit(1)
+        response = requests.get('https://api.myanimelist.net/v2/' + path,
+                                headers=headers, params=params,
+                                timeout=(min(4, remaining / 2), min(12, remaining / 2)))
+    except requests.RequestException as exc:
+        raise APIError('MyAnimeList could not be reached. Please try again shortly.', 502) from exc
+    if response.status_code in (401, 403):
+        if response.status_code == 403 and path.startswith('users/'):
+            raise APIError('This list is private or unavailable. Make your MAL anime list public and retry.', 403)
+        raise APIError('MyAnimeList rejected the server credentials. The server owner needs to update them.', 503)
+    if response.status_code == 404:
+        raise APIError('MyAnimeList could not find that profile or anime. Check the username.', 404)
+    if response.status_code == 429:
+        raise APIError('MyAnimeList is busy. Please wait a moment before trying again.', 503)
+    if response.status_code != 200:
+        raise APIError('MyAnimeList returned an error. Please try again shortly.', 502)
+    try:
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError('Expected an object')
+        return data
+    except ValueError as exc:
+        raise APIError('MyAnimeList returned an unreadable response. Please try again.', 502) from exc
 
-def H():  # headers for MAL
-    return {"Authorization": f"Bearer {tok()}"}
 
-# grab full user list (paged)
-def pull_animelist(user):
-    off = 0
-    out = []
-    while True:
-        url = f"https://api.myanimelist.net/v2/users/{user}/animelist"
-        params = {"limit": LIMIT, "offset": off, "fields": "list_status,num_episodes,status,score"}
-        r = requests.get(url, headers=H(), params=params, timeout=20)
-        if r.status_code != 200:
-            return {"error": True, "status": r.status_code, "body": r.text}
-        data = r.json()
-        out += data.get("data", [])
-        if "next" not in data.get("paging", {}):
-            break
-        off += LIMIT
-        time.sleep(PAUSE)
+def pull_animelist(username):
+    entries = {}
+    for offset in range(0, 30000, 1000):
+        data = mal_get(f'users/{quote(username, safe="")}/animelist',
+                       {'limit': 1000, 'offset': offset, 'fields': 'list_status', 'nsfw': 'true'})
+        for entry in data.get('data', []):
+            node, status = entry.get('node') or {}, entry.get('list_status') or {}
+            if node.get('id'):
+                entries[node['id']] = {'id': node['id'], 'title': node.get('title', 'Untitled'),
+                    'score': status.get('score', 0) or 0, 'status': status.get('status', ''),
+                    'updated_at': status.get('updated_at', '')}
+        if not data.get('paging', {}).get('next'):
+            return list(entries.values())
+    raise APIError('This anime list is too large to process completely. No partial results were generated.', 422)
 
-    flat = []
-    for e in out:
-        n = (e.get("node") or {})
-        ls = (e.get("list_status") or {})
-        flat.append({
-            "id": n.get("id"),
-            "title": n.get("title"),
-            "score": ls.get("score", 0) or 0,
-            "status": (ls.get("status") or "").replace(" ", "_").lower(),
-            "updated_at": ls.get("updated_at", "")
-        })
-    return {"error": False, "list": flat}
 
-# tiny MAL detail fetch (one id)
 def mal_one(aid):
-    fields = "id,title,main_picture,synopsis,mean,rating,num_list_users,media_type,genres,start_date,end_date"
-    try:
-        r = requests.get(
-            f"https://api.myanimelist.net/v2/anime/{aid}",
-            headers=H(),
-            params={"fields": fields},
-            timeout=12
-        )
-        return r.json() if r.status_code == 200 else {"id": aid}
-    except Exception:
-        return {"id": aid}
+    with _cache_lock:
+        cached = _cache.get(aid)
+    if cached is not None:
+        return cached
+    data = mal_get(f'anime/{int(aid)}', {'fields': DETAIL_FIELDS})
+    with _cache_lock:
+        _cache[aid] = data
+    return data
 
-@app.get("/api/health")
+
+def username_arg():
+    username = request.args.get('username', '').strip()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{2,16}', username):
+        raise APIError('Enter a valid MAL username: 2–16 letters, numbers, underscores or hyphens.', 400)
+    return username
+
+
+@app.get('/api/health')
 def health():
-    return j({"ok": True, "db": str(Path(DB_PATH).absolute()), "exists": Path(DB_PATH).exists(), "port": 5022})
+    try:
+        mal_headers()
+        configured = True
+    except APIError:
+        configured = False
+    return jsonify(ok=True, mal_configured=configured, database_available=Path(DB_PATH).is_file())
 
-@app.get("/")
+
+@app.get('/')
 def root():
-    return send_from_directory(app.static_folder, "index.html")
+    return app.send_static_file('index.html')
 
-@app.get("/results.html")
-def results_page():
-    return app.send_static_file("results.html")
 
-@app.get("/api/animelist")
+@app.get('/api/animelist')
 def api_animelist():
-    u = request.args.get("username", "").strip()
-    if not u: return j({"error": True, "message": "Missing ?username=..."}, 400)
-    res = pull_animelist(u)
-    if res.get("error"):
-        return j({"error": True, "message": "MAL API failed", "details": res.get("body")}, res.get("status", 502))
-    return j(res)
+    return jsonify(error=False, list=pull_animelist(username_arg()))
 
-@app.get("/api/recommendations")
+
+@app.get('/api/recommendations')
 def api_recs():
-    # imports local so this file stays one-piece
-    import pandas as pd
-    import numpy as np
-    from sklearn.metrics.pairwise import cosine_similarity
-    from scipy.sparse import csr_matrix
-
-    u = request.args.get("username", "").strip()
-    if not u: return j({"error": True, "message": "Missing ?username=..."}, 400)
-
-    got = pull_animelist(u)
-    if got.get("error"):
-        return j({"error": True, "message": "MAL API failed", "details": got.get("body")}, got.get("status", 502))
-
-    # make user ratings, fake scores if 0 based on status
-    rows = []
-    for x in got["list"]:
-        aid = x.get("id")
-        if not aid: continue
-        s = int(x.get("score", 0) or 0)
-        st = x.get("status", "")
-        if s == 0:
-            if   st == "completed":     s = 9
-            elif st == "watching":      s = 8
-            elif st == "plan_to_watch": s = 7  # <- correct snake_case
-            elif st == "on_hold":       s = 5
-            elif st == "dropped":       s = 3
-            else: continue
-        rows.append({"username": u, "anime_id": int(aid), "score": float(s)})
-
-    if not rows: return j({"error": True, "message": "This user has no usable anime."}, 400)
-
-    import pandas as pd
-    me = pd.DataFrame(rows, columns=["username", "anime_id", "score"])
-
-    # load historical matrix
-    conn = sqlite3.connect(DB_PATH)
-    everyone = pd.read_sql_query("SELECT username, anime_id, score FROM animelists WHERE score > 0", conn)
-    # keep users with >3 ratings (anti-noise)
-    active = everyone["username"].value_counts()
-    active = active[active > 3].index
-    everyone = everyone[everyone["username"].isin(active)]
-    # add me
-    everyone = pd.concat([everyone, me], ignore_index=True)
-
-    # pivot + sim
-    R = everyone.pivot_table(index="username", columns="anime_id", values="score")
-    mu = R.mean(axis=1)
-    C = R.sub(mu, axis=0).fillna(0.0)
-    S = csr_matrix(C.values)
-
-    if u not in R.index: return j({"error": True, "message": "User not present in rating matrix."}, 500)
-
-    i = R.index.get_loc(u)
-    sim = cosine_similarity(S[i], S).flatten()
-    sim = pd.Series(sim, index=R.index).drop(index=u)
-
-    co = ((R.notna()) & (R.loc[u].notna())).sum(axis=1).drop(index=u)
-    shrink = co / (co + 25.0)
-    w = (sim.clip(lower=0) * shrink).sort_values(ascending=False).head(100)
-    if w.empty: return j({"error": True, "message": "No similar users found."}, 200)
-
-    # predict for unseen
-    seen = set(me["anime_id"])
-    preds = []
-    nbr_mu = mu.loc[w.index]
-    for aid in R.columns:
-        if aid in seen: continue
-        r = R.loc[w.index, aid]
-        dev = r - nbr_mu
-        m = dev.notna() & (w > 0)
-        if m.sum() < 1: continue
-        num = float((w[m] * dev[m]).sum())
-        den = float(w[m].abs().sum())
-        if den == 0: continue
-        p = float(mu.loc[u] + num/den)
-        p = max(1.0, min(10.0, p))
-        preds.append((int(aid), p))
-
-    if not preds: return j({"error": True, "message": "No predictable unseen items."}, 200)
-
-    # titles from db
-    meta = sqlite3.connect(DB_PATH).cursor()
-    meta.execute("SELECT anime_id, title FROM anime_meta")
-    id2title = {row[0]: row[1] for row in meta.fetchall()}
-
-    preds.sort(key=lambda x: x[1], reverse=True)
-    top = preds[:10]
-
-    # enrich w/ MAL so frontend can show posters etc.
+    username = username_arg()
+    entries = pull_animelist(username)
+    if not entries:
+        raise APIError('This profile has an empty anime list. Add some shows on MAL, then try again.', 422)
+    excluded = {e['id'] for e in entries}
+    warnings = []
+    try:
+        candidates = collaborative(entries, username, DB_PATH)
+    except (sqlite3.Error, OSError, ValueError):
+        log.exception('Historical ratings could not be loaded')
+        candidates = []
+        warnings.append('The historical ratings database is unavailable; using MAL community recommendations.')
+    seed_list = seeds(entries)
+    method = 'similar_viewers'
+    if not candidates:
+        method = 'community'
+        if not seed_list:
+            raise APIError('There is not enough taste information yet. Rate a few shows you liked '
+                           '(7/10 or higher), or complete some shows if you do not use ratings.', 422)
+        seed_details = [(seed, mal_one(seed['id'])) for seed in seed_list]
+        candidates = community_candidates(seed_details, excluded)
+    completed = {e['id'] for e in entries if e['status'] == 'completed'}
     out = []
-    for aid, ps in top:
-        m = mal_one(aid)  # may be partial
-        out.append({
-            "id": m.get("id", aid),
-            "anime_id": aid,
-            "title": m.get("title", id2title.get(aid, f"Anime {aid}")),
-            "score": round(ps, 2),                 # our predicted
-            "mean": m.get("mean"),                 # MAL mean
-            "rating": m.get("rating"),
-            "num_list_users": m.get("num_list_users"),
-            "synopsis": m.get("synopsis"),
-            "main_picture": m.get("main_picture"), # {medium, large}
-            "media_type": m.get("media_type"),
-            "genres": m.get("genres"),
-            "start_date": m.get("start_date"),
-            "end_date": m.get("end_date"),
-            "mal_url": f"https://myanimelist.net/anime/{aid}"
-        })
-        time.sleep(PAUSE)
+    metadata_missing = False
+    for candidate in candidates[:40]:
+        aid = candidate['anime_id']
+        try:
+            detail = mal_one(aid)
+        except APIError as exc:
+            if exc.status == 504 and out:
+                warnings.append('MyAnimeList took too long; showing the matches found so far.')
+                break
+            if exc.status in (503, 502, 504):
+                raise
+            metadata_missing = True
+            continue
+        # Do not suggest sequels whose explicit prequel has not been completed.
+        if any(r.get('relation_type') == 'prequel' and r.get('node', {}).get('id') not in completed
+               for r in detail.get('related_anime', [])):
+            continue
+        if detail.get('rating') == 'rx':
+            continue
+        item = {key: detail.get(key) for key in ('id', 'title', 'main_picture', 'mean',
+                'synopsis', 'media_type', 'num_episodes', 'genres', 'start_date', 'rating')}
+        item.update(anime_id=aid, score=candidate['score'], source=candidate['source'],
+                    reason=candidate['reason'], support=candidate.get('support'),
+                    mal_url=f'https://myanimelist.net/anime/{aid}')
+        out.append(item)
+        if len(out) == 10:
+            break
+    if metadata_missing:
+        warnings.append('Some anime information was unavailable; those entries were skipped.')
+    message = None if out else ('No unseen matches were found with enough evidence. '
+                                'Try again after rating more shows on MAL.')
+    return jsonify(error=False, recommendations=out, username=username, method=method,
+        message=message, warnings=warnings, profile={'total': len(entries),
+        'rated': len(rated_entries(entries)), 'seeds': [e['title'] for e in seed_list]})
 
-    return j({"error": False, "recommendations": out})
 
-if __name__ == "__main__":
-    app.run(debug=True, use_reloader=True, host="127.0.0.1", port=5022)
+if __name__ == '__main__':
+    app.run(host=os.environ.get('HOST', '127.0.0.1'), port=int(os.environ.get('PORT', 5022)),
+            debug=os.environ.get('FLASK_DEBUG') == '1')
